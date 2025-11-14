@@ -19,6 +19,7 @@ import {
     type Snapshot,
     useMutationWithMutationMode,
 } from './useMutationWithMutationMode';
+import { useUpdateCache } from './useUpdateCache';
 
 /**
  * Get a callback to call the dataProvider.create() method, the result and the loading state.
@@ -103,6 +104,8 @@ export const useCreate = <
         )
     );
 
+    const updateCache = useUpdateCache({ type: 'create' });
+
     const [mutate, mutationResult] = useMutationWithMutationMode<
         MutationError,
         CreateResult<ResultRecordType>,
@@ -124,42 +127,7 @@ export const useCreate = <
                 }
                 return dataProviderCreate(resource, params);
             },
-            updateCache: (
-                { resource, ...params },
-                { mutationMode },
-                result
-            ) => {
-                const id =
-                    mutationMode === 'pessimistic'
-                        ? result?.id
-                        : params.data?.id;
-                if (!id) {
-                    throw new Error(
-                        'Invalid dataProvider response for create: missing id'
-                    );
-                }
-                // hack: only way to tell react-query not to fetch this query for the next 5 seconds
-                // because setQueryData doesn't accept a stale time option
-                const now = Date.now();
-                const updatedAt =
-                    mutationMode === 'undoable' ? now + 5 * 1000 : now;
-                // Stringify and parse the data to remove undefined values.
-                // If we don't do this, an update with { id: undefined } as payload
-                // would remove the id from the record, which no real data provider does.
-                const clonedData = JSON.parse(
-                    JSON.stringify(
-                        mutationMode === 'pessimistic' ? result : params.data
-                    )
-                );
-
-                queryClient.setQueryData(
-                    [resource, 'getOne', { id: String(id), meta: params.meta }],
-                    (record: RecordType) => ({ ...record, ...clonedData }),
-                    { updatedAt }
-                );
-
-                return clonedData;
-            },
+            updateCache,
             getQueryKeys: ({ resource, ...params }, { mutationMode }) => {
                 const queryKeys: any[] = [
                     [resource, 'getList'],

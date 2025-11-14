@@ -18,6 +18,7 @@ import type {
     UpdateResult,
 } from '../types';
 import { useMutationWithMutationMode } from './useMutationWithMutationMode';
+import { useUpdateCache } from './useUpdateCache';
 import { useEvent } from '../util';
 
 /**
@@ -100,6 +101,8 @@ export const useUpdate = <RecordType extends RaRecord = any, ErrorType = Error>(
             dataProvider.update<RecordType>(resource, params)
     );
 
+    const updateCache = useUpdateCache({ type: 'update' });
+
     const [mutate, mutationResult] = useMutationWithMutationMode<
         ErrorType,
         UpdateResult<RecordType>,
@@ -129,110 +132,7 @@ export const useUpdate = <RecordType extends RaRecord = any, ErrorType = Error>(
                     params as UpdateParams<RecordType>
                 );
             },
-            updateCache: (
-                { resource, ...params },
-                { mutationMode },
-                result
-            ) => {
-                // hack: only way to tell react-query not to fetch this query for the next 5 seconds
-                // because setQueryData doesn't accept a stale time option
-                const now = Date.now();
-                const updatedAt =
-                    mutationMode === 'undoable' ? now + 5 * 1000 : now;
-                // Stringify and parse the data to remove undefined values.
-                // If we don't do this, an update with { id: undefined } as payload
-                // would remove the id from the record, which no real data provider does.
-                const clonedData = JSON.parse(
-                    JSON.stringify(
-                        mutationMode === 'pessimistic' ? result : params?.data
-                    )
-                );
-
-                const updateColl = (old: RecordType[]) => {
-                    if (!old) return old;
-                    const index = old.findIndex(
-                        // eslint-disable-next-line eqeqeq
-                        record => record.id == params?.id
-                    );
-                    if (index === -1) {
-                        return old;
-                    }
-                    return [
-                        ...old.slice(0, index),
-                        { ...old[index], ...clonedData } as RecordType,
-                        ...old.slice(index + 1),
-                    ];
-                };
-
-                type GetListResult = Omit<OriginalGetListResult, 'data'> & {
-                    data?: RecordType[];
-                };
-
-                const previousRecord = queryClient.getQueryData<RecordType>([
-                    resource,
-                    'getOne',
-                    { id: String(params?.id), meta: params?.meta },
-                ]);
-
-                queryClient.setQueryData(
-                    [
-                        resource,
-                        'getOne',
-                        { id: String(params?.id), meta: params?.meta },
-                    ],
-                    (record: RecordType) => ({
-                        ...record,
-                        ...clonedData,
-                    }),
-                    { updatedAt }
-                );
-                queryClient.setQueriesData(
-                    { queryKey: [resource, 'getList'] },
-                    (res: GetListResult) =>
-                        res && res.data
-                            ? { ...res, data: updateColl(res.data) }
-                            : res,
-                    { updatedAt }
-                );
-                queryClient.setQueriesData(
-                    { queryKey: [resource, 'getInfiniteList'] },
-                    (
-                        res: UseInfiniteQueryResult<
-                            InfiniteData<GetInfiniteListResult>
-                        >['data']
-                    ) =>
-                        res && res.pages
-                            ? {
-                                  ...res,
-                                  pages: res.pages.map(page => ({
-                                      ...page,
-                                      data: updateColl(page.data),
-                                  })),
-                              }
-                            : res,
-                    { updatedAt }
-                );
-                queryClient.setQueriesData(
-                    { queryKey: [resource, 'getMany'] },
-                    (coll: RecordType[]) =>
-                        coll && coll.length > 0 ? updateColl(coll) : coll,
-                    { updatedAt }
-                );
-                queryClient.setQueriesData(
-                    { queryKey: [resource, 'getManyReference'] },
-                    (res: GetListResult) =>
-                        res && res.data
-                            ? { ...res, data: updateColl(res.data) }
-                            : res,
-                    { updatedAt }
-                );
-
-                const optimisticResult = {
-                    ...previousRecord,
-                    ...clonedData,
-                };
-                return optimisticResult;
-            },
+            updateCache,
             getQueryKeys: ({ resource, ...params }) => {
                 const queryKeys = [
                     [

@@ -21,6 +21,7 @@ import {
     useMutationWithMutationMode,
 } from './useMutationWithMutationMode';
 import { useEvent } from '../util';
+import { useUpdateCache } from './useUpdateCache';
 
 /**
  * Get a callback to call the dataProvider.delete() method, the result and the loading state.
@@ -92,6 +93,8 @@ export const useDelete = <
     const queryClient = useQueryClient();
     const { mutationMode = 'pessimistic', ...mutationOptions } = options;
 
+    const updateCache = useUpdateCache({ type: 'delete' });
+
     const [mutate, mutationResult] = useMutationWithMutationMode<
         MutationError,
         DeleteResult<RecordType>,
@@ -116,101 +119,7 @@ export const useDelete = <
                     params as DeleteParams<RecordType>
                 );
             },
-            updateCache: ({ resource, ...params }, { mutationMode }) => {
-                // hack: only way to tell react-query not to fetch this query for the next 5 seconds
-                // because setQueryData doesn't accept a stale time option
-                const now = Date.now();
-                const updatedAt =
-                    mutationMode === 'undoable' ? now + 5 * 1000 : now;
-
-                const updateColl = (old: RecordType[]) => {
-                    if (!old) return old;
-                    const index = old.findIndex(
-                        // eslint-disable-next-line eqeqeq
-                        record => record.id == params.id
-                    );
-                    if (index === -1) {
-                        return old;
-                    }
-                    return [...old.slice(0, index), ...old.slice(index + 1)];
-                };
-
-                type GetListResult = Omit<OriginalGetListResult, 'data'> & {
-                    data?: RecordType[];
-                };
-
-                queryClient.setQueriesData(
-                    { queryKey: [resource, 'getList'] },
-                    (res: GetListResult) => {
-                        if (!res || !res.data) return res;
-                        const newCollection = updateColl(res.data);
-                        const recordWasFound =
-                            newCollection.length < res.data.length;
-                        return recordWasFound
-                            ? {
-                                  data: newCollection,
-                                  total: res.total ? res.total - 1 : undefined,
-                                  pageInfo: res.pageInfo,
-                              }
-                            : res;
-                    },
-                    { updatedAt }
-                );
-                queryClient.setQueriesData(
-                    { queryKey: [resource, 'getInfiniteList'] },
-                    (
-                        res: UseInfiniteQueryResult<
-                            InfiniteData<GetInfiniteListResult>
-                        >['data']
-                    ) => {
-                        if (!res || !res.pages) return res;
-                        return {
-                            ...res,
-                            pages: res.pages.map(page => {
-                                const newCollection = updateColl(page.data);
-                                const recordWasFound =
-                                    newCollection.length < page.data.length;
-                                return recordWasFound
-                                    ? {
-                                          ...page,
-                                          data: newCollection,
-                                          total: page.total
-                                              ? page.total - 1
-                                              : undefined,
-                                          pageInfo: page.pageInfo,
-                                      }
-                                    : page;
-                            }),
-                        };
-                    },
-                    { updatedAt }
-                );
-                queryClient.setQueriesData(
-                    { queryKey: [resource, 'getMany'] },
-                    (coll: RecordType[]) =>
-                        coll && coll.length > 0 ? updateColl(coll) : coll,
-                    { updatedAt }
-                );
-                queryClient.setQueriesData(
-                    { queryKey: [resource, 'getManyReference'] },
-                    (res: GetListResult) => {
-                        if (!res || !res.data) return res;
-                        const newCollection = updateColl(res.data);
-                        const recordWasFound =
-                            newCollection.length < res.data.length;
-                        return recordWasFound
-                            ? {
-                                  ...res,
-                                  data: newCollection,
-                                  total: res.total! - 1,
-                              }
-                            : res;
-                    },
-                    { updatedAt }
-                );
-
-                return params.previousData;
-            },
+            updateCache,
             getQueryKeys: ({ resource }) => {
                 const queryKeys = [
                     [resource, 'getList'],
